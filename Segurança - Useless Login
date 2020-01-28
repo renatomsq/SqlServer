@@ -1,0 +1,185 @@
+ /************************************************************
+Script: Logins inutilizados (Useless logins)
+Descrição: 
+          [PT-BR] Indica todos os logins que não possuem usuário ou permissões à nível de servidor.
+          [EN-US] This script shows the logins who doesn't have any users or permissions at a server level
+************************************************************/
+
+ -- Tabela associação login/usuário (Temporary table for save the login/user relationship)
+
+IF EXISTS (SELECT * FROM TEMPDB.SYS.OBJECTS WHERE NAME = '##LoginWithUser')
+BEGIN
+        DROP TABLE ##LoginWithUser;
+END
+GO
+CREATE TABLE ##LoginWithUser
+(
+    [Database] VARCHAR(80),
+    [Login] VARCHAR(80),
+    [User] VARCHAR(80)
+);
+GO
+
+ 
+
+-- Tabela para salvar os logins e suas permissões (Temporary table for save the login and info permissions)
+
+IF EXISTS (SELECT * FROM TEMPDB.SYS.OBJECTS WHERE NAME = '##LoginPermissions')
+BEGIN
+        DROP TABLE ##LoginPermissions;
+END
+GO
+CREATE TABLE ##LoginPermissions
+(
+    [Login] VARCHAR(80),
+    [Permission] VARCHAR(80),
+    [Description] VARCHAR(80)
+);
+GO
+
+
+--  [PT-BR] - Salva em tabela temporária a relação login/user. 
+--	[EN-US] - Save in a temporary table the login/user relationship. 
+
+EXEC SP_MSFOREACHDB
+' USE [?];
+INSERT INTO ##LoginWithUser ([Database],[Login],[User])
+select db_name() as [Database], p.name as [Login], dp.name [User]
+from sys.server_principals p
+inner join sys.database_principals dp
+on p.sid = dp.sid'
+
+ 
+  
+--  [PT-BR] -  Nosso intuito ao decorrer do script é detectar qual login não possui usuário associado
+--	[EN-US] -  Our intent in the next code blocks is detect which login hasn't user associated. 
+ 
+ 
+
+-- [EN-US] Login without user - A good point to discover orphan logins
+-- [PT-BR] Login sem usuário - Um bom ponto de3 partida para descobrir logins órfãos (sem usuários)
+
+
+
+-- (Easter Egg aqui. Rode este script caso queira listar quais logins não possuem usuário) 
+--
+-- SELECT NAME      AS [Login], 
+--       '-'     AS [Permission], 
+--       'Login with No user' AS [Description] 
+--FROM   sys.server_principals P 
+--WHERE  1 = 1 
+--       AND ( principal_id > 10 
+--             AND NAME NOT LIKE '##%' 
+--             AND NAME NOT LIKE '%NT\%' 
+--             AND type <> 'R' ) 
+--       AND P.NAME NOT IN (SELECT DISTINCT [login] 
+--                          FROM ##LoginWithUser) 
+--       AND P.principal_id NOT IN (SELECT member_principal_id 
+--                                  FROM   sys.server_role_members 
+--                                  WHERE  role_principal_id = 3) /* role_princ_id = 3 is sysadmin*/
+
+
+
+
+
+-- [EN-US] No User but it's a server role member - You need to check if it's still makes sense for your environment 
+-- [PT-BR] Sem usuário porém é membro de uma role de servidor - Você precisa checar se isso ainda faz sentido pro seu ambiente 
+
+
+ 
+INSERT INTO ##LoginPermissions ([Login], [Permission], [Description]) 
+
+
+SELECT Suser_name(member_principal_id) AS [Login], 
+       Suser_name(role_principal_id)   AS [Permission], 
+       'No User, have any role'      AS [Description] 
+FROM   sys.server_role_members rm 
+       INNER JOIN sys.server_principals p 
+               ON p.principal_id = rm.member_principal_id 
+WHERE  is_disabled = 0  
+ AND ( principal_id > 10 
+             AND NAME NOT LIKE '##%' 
+             AND NAME NOT LIKE '%NT\%' 
+             AND type <> 'R' ) 
+AND Suser_name(member_principal_id) NOT IN (SELECT [login]  FROM ##LoginWithUser) 
+
+UNION ALL 
+
+
+-- [EN-US] No User with any server permission - Cautious, mainly if CONTROL SERVER permission comes to play there.
+-- [PT-BR] Sem usuário porém possui permissão de servidor - Atenção, principalmente se tiver CONTROL SERVER
+
+SELECT NAME                      AS [Login], 
+       PER.permission_name       AS [Permission], 
+       'No User, have any permission' AS [Description] 
+FROM   sys.server_principals p 
+       INNER JOIN sys.server_permissions per 
+               ON per.grantee_principal_id = p.principal_id 
+WHERE  PER.permission_name <> 'CONNECT SQL' 
+        AND P.is_disabled = 0  
+        AND ( principal_id > 10 
+             AND NAME NOT LIKE '##%' 
+             AND NAME NOT LIKE '%NT\%' 
+             AND P.type <> 'R' ) 
+        AND Suser_name(principal_id)  NOT IN (SELECT [login]  FROM ##LoginWithUser)
+
+ UNION ALL 
+
+
+-- [EN-US] Have user and is a server rolemember  
+-- [PT-BR] Com usuário e que seja membro de role de servidor 
+
+SELECT Suser_name(member_principal_id) AS [Login], 
+       Suser_name(role_principal_id)   AS [Permission], 
+       'Have user, have any role'      AS [Description]  -- COM USUÁRIO, PERMISSÃO DE SERVIDOR VIA ROLE
+FROM   sys.server_role_members rm 
+       INNER JOIN sys.server_principals p 
+               ON p.principal_id = rm.member_principal_id 
+WHERE  is_disabled = 0  
+ AND ( principal_id > 10 
+             AND NAME NOT LIKE '##%' 
+             AND NAME NOT LIKE '%NT\%' 
+             AND type <> 'R' ) 
+AND Suser_name(member_principal_id)  IN (SELECT [login]  FROM ##LoginWithUser) 
+
+UNION ALL
+
+-- [EN-US] Have a user and have a  server permission 
+-- [PT-BR] Tem usuário e tem permissão de servidor individual 
+
+SELECT NAME                      AS [Login], 
+       PER.permission_name       AS [Permission], 
+       'Have user, have any permission' AS [Description] -- COM USUÁRIO, PERMISSÃO DE SERVIDOR INDIVIDUAL
+FROM   sys.server_principals p 
+       INNER JOIN sys.server_permissions per 
+               ON per.grantee_principal_id = p.principal_id 
+WHERE  PER.permission_name <> 'CONNECT SQL' 
+        AND P.is_disabled = 0  
+        AND ( principal_id > 10 
+             AND NAME NOT LIKE '##%' 
+             AND NAME NOT LIKE '%NT\%' 
+             AND P.type <> 'R' ) 
+        AND Suser_name(principal_id)  IN (SELECT [login]  FROM ##LoginWithUser) 
+GO 
+
+-- Comente este select caso não tenha interesse em ver o que os logins possuem 
+
+SELECT [Login], [Permission], [Description] FROM ##LoginPermissions
+GO
+
+ 
+ -- Descobrindo quem são os logins inúteis (sem usuário, sem permissões e não são membros de roles)
+
+ SELECT 
+    NAME as [Login], 
+    TYPE_DESC as [Permission], 
+    'Useless Login' as [Description] 
+ FROM SYS.SERVER_PRINCIPALS P 
+ WHERE 1=1
+ AND ( PRINCIPAL_ID > 10 AND NAME NOT LIKE '##%' AND NAME NOT LIKE '%NT\%' AND TYPE <> 'R')
+ AND P.PRINCIPAL_ID NOT IN (SELECT MEMBER_PRINCIPAL_ID FROM sys.server_role_members WHERE role_principal_id = 3) /* 3 =  sysadmin*/
+ AND is_disabled = 0 
+ AND P.NAME NOT IN (SELECT DISTINCT [login] FROM ##LoginWithUser) /* Descobre se o login tem usuário | Discover if the login has a user */
+ AND NAME NOT IN (SELECT [LOGIN] FROM ##LoginPermissions)
+ ORDER BY 1 ASC
+
