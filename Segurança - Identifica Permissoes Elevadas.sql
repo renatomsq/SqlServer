@@ -1,10 +1,8 @@
-/***
-
+/* 
 	Script: Identifica permissões elevadas no SQL Server 
 	Autor: Renato Siqueira
 	Fonte: https://renatomsiqueira.com.br/2015/09/21/identificando-logins-com-permissoes-elevadas-no-sql-server/
-
-*****/
+*/
 
 
 SELECT DISTINCT Suser_name(member_principal_id)      AS [Login], 
