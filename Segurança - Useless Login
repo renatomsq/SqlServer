@@ -176,7 +176,7 @@ GO
     'Useless Login' as [Description] 
  FROM SYS.SERVER_PRINCIPALS P 
  WHERE 1=1
- AND ( PRINCIPAL_ID > 10 AND NAME NOT LIKE '##%' AND NAME NOT LIKE '%NT\%' AND TYPE <> 'R')
+ AND ( PRINCIPAL_ID > 10 AND NAME NOT LIKE '##%' AND NAME NOT LIKE '%NT%' AND TYPE <> 'R')
  AND P.PRINCIPAL_ID NOT IN (SELECT MEMBER_PRINCIPAL_ID FROM sys.server_role_members WHERE role_principal_id = 3) /* 3 =  sysadmin*/
  AND is_disabled = 0 
  AND P.NAME NOT IN (SELECT DISTINCT [login] FROM ##LoginWithUser) /* Descobre se o login tem usuário | Discover if the login has a user */
