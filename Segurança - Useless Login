@@ -1,4 +1,4 @@
- /************************************************************
+  /************************************************************
 Script: Logins inutilizados (Useless logins)
 Descrição: 
           [PT-BR] Indica todos os logins que não possuem usuário ou permissões à nível de servidor.
@@ -160,8 +160,7 @@ WHERE  PER.permission_name <> 'CONNECT SQL'
              AND NAME NOT LIKE '%NT\%' 
              AND P.type <> 'R' ) 
         AND Suser_name(principal_id)  IN (SELECT [login]  FROM ##LoginWithUser) 
-GO 
-
+  GO
 -- Comente este select caso não tenha interesse em ver o que os logins possuem 
 
 SELECT [Login], [Permission], [Description] FROM ##LoginPermissions
@@ -181,5 +180,13 @@ GO
  AND is_disabled = 0 
  AND P.NAME NOT IN (SELECT DISTINCT [login] FROM ##LoginWithUser) /* Descobre se o login tem usuário | Discover if the login has a user */
  AND NAME NOT IN (SELECT [LOGIN] FROM ##LoginPermissions)
- ORDER BY 1 ASC
+
+ UNION ALL 
+
+SELECT pri.name, p.class_desc as [Permission], 'Useless Login (But Owner)' as [Description] FROM sys.server_permissions p
+	 INNER JOIN sys.server_principals pri on pri.principal_id = p.grantor_principal_id
+	 where grantor_principal_id <> 1
+GO
+ 
+
 
