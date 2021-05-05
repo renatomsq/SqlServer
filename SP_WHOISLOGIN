@@ -1,8 +1,9 @@
  
 /************
 
+Título: SP_WHOISLOGIN
 Autor: Renato Siqueira
-Descrição: Informa um login e ele recupera todas as permissões associadas a nível de banco e servidor (incluindo Ownership).
+Descrição: Informa um login e ele recupera todas as permissões associadas a nível de banco e servidor (incluindo Ownership). 
 Exemplo de chamada: 
 	EXEC [sp_whoislogin] sa
 
