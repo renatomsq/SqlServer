@@ -1,0 +1,200 @@
+ 
+/************
+
+Autor: Renato Siqueira
+Descrição: Informa um login e ele recupera todas as permissões associadas a nível de banco e servidor (incluindo Ownership).
+Exemplo de chamada: 
+	EXEC [sp_whoislogin] sa
+
+
+***************/
+  
+CREATE OR ALTER  PROCEDURE [dbo].[sp_whoislogin] 
+(@login varchar(100))  
+AS  
+BEGIN  
+/* Pra debugar: declare @login varchar(50) = 'SEUADNET\NOMELOGIN'  */
+
+/* Drop/create das tabelas  */  
+  
+IF object_id('tempdb..##UsuarioFiltro') is not null  
+BEGIN  
+   DROP TABLE ##UsuarioFiltro  
+END  
+   
+IF object_id('tempdb..##PermissaoUsuario') is not null  
+BEGIN  
+    DROP TABLE ##PermissaoUsuario  
+END  
+  
+IF object_id('tempdb..##LoginPermissao') is not null  
+BEGIN  
+    DROP TABLE ##LoginPermissao  
+END  
+  
+CREATE TABLE ##UsuarioFiltro ([Login] VARCHAR(100), [Tipo de Login] VARCHAR(100), [Data de Criação] DATETIME, [sid] varbinary(85));  
+CREATE TABLE ##PermissaoUsuario ([Usuário] varchar(100),BancoDados varchar(100), Tipo varchar(100), [Permissão] varchar(100), Objeto varchar(100))  
+CREATE TABLE ##LoginPermissao ([Login] varchar(100),  [Permissão] varchar(100), Escopo varchar(100))  
+   
+/* Informações básicas de login */  
+  
+INSERT INTO ##UsuarioFiltro ([Login],[Tipo de Login],[Data de Criação], [sid])  
+SELECT name as [Login], type_desc as [Tipo de Login], create_date as [Data de Criação], [sid]  
+from sys.server_principals   
+where name = @login  
+
+ 
+/* Informações de Servidor - Roles e Permissões  */
+
+INSERT INTO  ##LoginPermissao ([Login],[Permissão],Escopo)  
+SELECT   
+    u.name NomeLogin,  
+    UPPER(r.name) [Role],   
+    'Servidor' as [Escopo]  
+FROM sys.server_principals u  
+    LEFT JOIN sys.server_role_members lr  
+        ON u.principal_id = lr.member_principal_id    
+    LEFT JOIN sys.server_principals r  
+        ON lr.role_principal_id = r.principal_id  
+    WHERE u.name = @login  
+ AND r.name IS NOT NULL  
+UNION ALL   
+SELECT   
+    u.name [Login],  
+    p.permission_name AS Permissao,   
+    'Servidor' as [Escopo]  
+FROM sys.server_principals u  
+INNER JOIN sys.server_permissions p on p.grantee_principal_id = u.principal_id  
+where u.name = @login  
+and state_desc = 'GRANT'  
+AND PERMISSION_NAME NOT IN ('CONNECT SQL')  
+    
+/* Informações de Banco de Dados - Roles e Permissões  */  
+  
+exec sp_msforeachdb ' 
+ 
+		DECLARE @sid varbinary(85) = (SELECT [sid] FROM ##UsuarioFiltro)    
+		/* Database Permissions*/  
+        INSERT INTO ##PERMISSAOUSUARIO ([Usuário],[BancoDados],[Tipo],[Permissão],[Objeto]) 
+        SELECT   
+				[Usuário]= u.name collate SQL_Latin1_General_CP1_CI_AI ,   
+                [BancoDados] =  ''[?]'' collate SQL_Latin1_General_CP1_CI_AI,    
+                [Tipo] = p.class_desc collate SQL_Latin1_General_CP1_CI_AI,   
+				[Permissão] = p.permission_name collate SQL_Latin1_General_CP1_CI_AI,   
+				[Objeto] = o.name collate SQL_Latin1_General_CP1_CI_AI    
+        FROM [?].sys.database_principals u            
+        INNER JOIN [?].sys.database_permissions p   ON u.principal_id = p.grantee_principal_id  
+		LEFT JOIN [?].sys.objects o  ON p.major_id = o.object_id  
+        WHERE u.type_desc <> ''DATABASE_ROLE''  
+        /*AND p.permission_name <> ''CONNECT''*/  
+        AND u.sid = @sid  
+        UNION ALL     
+		/* Database Roles */
+        SELECT   
+            u.name [Usuário],   
+            ''[?]'' [BancoDados],   
+            Tipo = ''DATABASE_ROLE'',   
+            UPPER(r.name) [Permissão], 
+			''-'' as [Objeto]          
+        FROM [?].sys.database_principals u  
+        INNER JOIN [?].sys.database_role_members rm  
+        ON u.principal_id = rm.member_principal_id  
+        INNER JOIN [?].sys.database_principals r  
+        ON rm.role_principal_id = r.principal_id  
+        WHERE u.type_desc <> ''DATABASE_ROLE''  
+        AND u.sid = @sid'  
+  
+/* (1) SELECT: Informações de login  */  
+  
+ SELECT DISTINCT   
+    sp.name,  
+    sp.is_disabled,  
+    sp.create_date,  
+    sp.modify_date,  
+ (SELECT COUNT(1) FROM sys.databases where suser_sname(d.owner_sid) = @login) AS [# DBs Owned],  
+ (SELECT COUNT(1) FROM msdb.dbo.sysjobs j WHERE suser_sname(j.owner_sid) = @login) [# Jobs Owned] ,  
+ (SELECT COUNT(1) FROM SYS.ENDPOINTS where SUSER_NAME(principal_id) = @login)[# Endpoints Owned]  
+FROM sys.server_principals sp  
+LEFT JOIN sys.databases d on suser_sname(d.owner_sid) = sp.name  
+WHERE sp.name = @login  
+  
+/* (2) SELECT: Permissões de servidor */  
+  
+  
+ SELECT   DISTINCT 
+        [Login],  
+        [Permissão],  
+        [Escopo],    
+		[Descrição] =   
+			CASE  
+				WHEN [Permissão] = 'processadmin' THEN 'Permite encerrar os processos em execução via comando KILL'  
+				WHEN [Permissão] = 'bulkadmin' THEN 'Permite importação de arquivos ou lotes de arquivos diretamente para determinado banco de dados via BULK INSERT'  
+				WHEN [Permissão] = 'dbcreator' THEN 'Permite criar, alterar, remover ou restaurar um banco de dados'  
+				WHEN [Permissão] = 'sysadmin' THEN 'Permissão elevada, pode executar qualquer atividade no servidor'  
+				WHEN [Permissão] = 'securityadmin' THEN 'Permissão elevada, permite gerenciar logins e suas propriedades, inclusive atribuir permissões de servidor'  
+				WHEN [Permissão] = 'setupadmin' THEN 'Permite a criação e configuração de Linked Servers'  
+				WHEN [Permissão] = 'serveradmin' THEN 'Permite realizar configurações específicas em escopo de servidor'  
+				WHEN [Permissão] = 'diskadmin' THEN 'Permite administrar dispositivos de backup'     
+				ELSE '-'  
+			END  
+ FROM ##LoginPermissao  
+  
+ /* (3) SELECT: Permissões de banco de dados */  
+  
+ SELECT   DISTINCT
+     [Usuário],  
+     [BancoDados],  
+     [Tipo de Permissão] =  
+     CASE  
+            WHEN Tipo = 'OBJECT_OR_COLUMN' then 'TABELA'  
+            WHEN Tipo = 'DATABASE_ROLE' then 'ROLE'  
+  
+            ELSE [Tipo]  
+     END,  
+     [Permissão],  
+     UPPER(Objeto) AS [Objeto],  
+     [Descrição] =   
+        CASE  
+           WHEN [Permissão] = 'db_datareader' THEN 'Permite realizar leitura em todas as tabelas do banco de dados associado'      
+           WHEN [Permissão] = 'db_Datawriter' THEN 'Permite realizar escrita em todas as tabelas do banco de dados associado'  
+           WHEN [Permissão] = 'db_ddladmin' THEN 'Permite criar, deletar e modificar estruturas de banco de dados associado através de comandos DDL'  
+           WHEN [Permissão] = 'db_backupoperator' THEN 'Permite ao usuário executar procedimentos de BACKUP e CHECKPOINT no banco de dados associado'  
+           WHEN [Permissão] = 'db_owner' THEN 'Permite executar todas as funções de configuração e manutenção no banco de dados associado'  
+           WHEN [Permissão] = 'db_acessadmin' THEN 'Permite que o usuário altere permissões de usuários e permissão de connect ao banco de dados associado'  
+           WHEN [Permissão] = 'view definition' THEN 'Permite que o usuário acesse os metadados do objeto associado (sem acesso aos dados em si)'  
+           WHEN [Permissão] = 'DB_SECURITYADMIN' THEN 'Permite conceder ou revogar permissões no banco de dados associado'  
+           WHEN [permissão] = 'SELECT' THEN  'Permite realizar a leitura da tabela associada'  
+           WHEN [permissão] = 'UPDATE' THEN  'Permite realizar a atualização de registros da tabela associada'  
+           WHEN [permissão] = 'DELETE' THEN  'Permite realizar a deleção de registros da tabela associada'  
+           WHEN [permissão] = 'INSERT' THEN  'Permite realizar a inserção de registros da tabela associada'  
+		   WHEN [permissão] = 'EXECUTE' THEN 'Permite realizar a execução de SP''s e funções associados'    
+		   WHEN [Permissão] = 'CONNECT' THEN 'Permite a Conexão (Sessão) com uma base de dados.'  
+		   WHEN [Permissão] = 'CREATE FUNCTION' THEN 'Permite a criação de Funções no banco de dados.'  
+		   WHEN [Permissão] = 'CREATE PROCEDURE' THEN 'Permite a criação de Procedures no banco de dados.'  
+		   WHEN [Permissão] = 'CREATE TABLE' THEN 'Permite a criação de Tabelas no banco de dados.'  
+		   WHEN [Permissão] = 'CREATE RULE' THEN 'Permite a criação de uma Regra de validação no banco de dados.'  
+		   WHEN [Permissão] = 'CREATE VIEW' THEN 'Permite a criação de Views no banco de dados.'  
+		   WHEN [Permissão] = 'BACKUP DATABASE' THEN 'Permite a execução de Backups de dados do banco de dados em questão.'  
+		   WHEN [Permissão] = 'BACKUP LOG' THEN 'Permite a execução de Backups de LOG do banco de dados em questão.'  
+		   WHEN [Permissão] = 'SHOWPLAN' THEN 'Permite a exibição dos planos de exexcução do banco de dados.'  
+		   WHEN [Permissão] = 'VIEW DATABASE STATE' THEN 'Permite a visualização dos metadados dos objetos em um banco de dados.'  
+		   WHEN [Permissão] = 'VIEW SERVER STATE' THEN 'Permite a visualização dos metadados dos objetos em um servidor.'  
+		   WHEN [Permissão] = 'ALTER' THEN 'Permite alterar as propriedades de um objeto no banco de dados ou schema.'  
+		   WHEN [Permissão] = 'DB_FUNCTIONS' THEN 'Permite executar funções pertencentes à role em questão.'  
+		   WHEN [Permissão] = 'DB_DENYDATAWRITER' THEN 'Permite negar a leitura à objetos no banco de dados.'  
+		   WHEN [Permissão] = 'CDC_READ' THEN 'Role interna de leitura do contexto transacional CDC.'  
+		   WHEN [Permissão] = 'ALTER TRACE' THEN 'Permite ao usuário criar e alterar rastreamentos no servidor.'  
+		   WHEN [Permissão] = 'CONNECT ANY DATABASE' THEN 'Permite a conexão à qualquer database e a banco de dados criados futuramente.'  
+		   WHEN [Permissão] = 'VIEW ANY DEFINITION' THEN 'Permite acesso aos metadados dos objetos do banco de dados, sem que os dados em si sejam expostos.'  
+		   WHEN [Permissão] = 'VIEW ANY DATABASE' THEN 'Permite acesso aos metadados dos databases do servidor.'  
+		   WHEN [Permissão] = 'CREATE DEFAULT' THEN 'Permite a criação de um objeto padrão (modelo) no banco de dados.'  
+		 /* WHEN [Permissão] = 'DB_CUSTOM' THEN 'Insira aqui antes do ELSE suas roles ' */ 
+   ELSE '-'  
+        END  
+ FROM ##PermissaoUsuario  
+ WHERE BancoDados NOT IN ('[model]','[tempdb]')  
+  
+   
+  
+ END  
+  
