@@ -7,7 +7,8 @@
 
 SELECT DISTINCT Suser_name(member_principal_id)      AS [Login], 
                 Upper(Suser_name(role_principal_id)) AS [Permissão], 
-                Getdate()                            AS [Data Coleta] 
+                Getdate()                            AS [Data Coleta],
+				type_desc as [Tipo] 
 FROM   sys.server_role_members rm 
        INNER JOIN sys.server_principals p 
                ON p.principal_id = rm.member_principal_id 
@@ -21,10 +22,11 @@ UNION ALL
 
 SELECT NAME             AS [Login], 
        'CONTROL SERVER' AS [Permissão], 
-       Getdate()        AS [Data Coleta] 
+       Getdate()        AS [Data Coleta],
+	   type_desc as [Tipo] 
 FROM   sys.server_principals p 
        INNER JOIN sys.server_permissions per 
                ON per.grantee_principal_id = p.principal_id 
 WHERE  PER.permission_name = 'CONTROL SERVER ' 
-       AND P.is_disabled = 0 
+       AND P.is_disabled = 0
  
