@@ -1,0 +1,66 @@
+CREATE  OR ALTER  PROCEDURE sp_backup_atraso  
+as  
+  
+WITH CTE_BACKUP_ATRASO  
+AS(  
+SELECT    
+  DISTINCT    
+        a.Name AS DatabaseName ,    
+        CONVERT(SYSNAME, DATABASEPROPERTYEX(a.name, 'Recovery')) RecoveryModel ,    
+        COALESCE(( SELECT   CONVERT(VARCHAR(20), MAX(backup_finish_date), 120)    
+                   FROM     msdb.dbo.backupset    
+                   WHERE    database_name = a.name    
+                            AND type = 'd'    
+                            AND is_copy_only = '0'    
+                 ), '-') AS 'Full' ,    
+        COALESCE(( SELECT   CONVERT(VARCHAR(20), MAX(backup_finish_date), 120)    
+                   FROM     msdb.dbo.backupset    
+                   WHERE    database_name = a.name    
+                            AND type = 'i'    
+                            AND is_copy_only = '0'    
+                 ), '-') AS 'Diff' ,    
+        COALESCE(( SELECT   CONVERT(VARCHAR(20), MAX(backup_finish_date), 120)    
+                   FROM     msdb.dbo.backupset    
+                   WHERE    database_name = a.name    
+                            AND type = 'l'    
+                 ), '-') AS 'LastLog' ,    
+        COALESCE(( SELECT   CONVERT(VARCHAR(20), backup_finish_date, 120)    
+                   FROM     ( SELECT    ROW_NUMBER() OVER ( ORDER BY backup_finish_date DESC ) AS 'rownum' ,    
+                                        backup_finish_date    
+                              FROM      msdb.dbo.backupset    
+                              WHERE     database_name = a.name    
+                                        AND type = 'l'    
+                            ) withrownum    
+                   WHERE    rownum = 2    
+                 ), '-') AS 'LastLog2'    
+FROM    sys.databases a    
+        LEFT OUTER JOIN msdb.dbo.backupset b ON b.database_name = a.name    
+WHERE   a.name <> 'tempdb'    
+        AND a.state_desc = 'ONLINE'    
+GROUP BY a.Name ,    
+        a.compatibility_level     
+)  
+  
+SELECT   
+ DatabaseName,   
+ [Full],   
+ [Diff],   
+ [LastLog],   
+ Full_Days_since = CASE when [Full] = '-'  THEN 0 ELSE DATEDIFF(DAY, [Full],getdate())  END ,  
+ Full_NextBackup = CASE when [Full] = '-' THEN GETDATE() ELSE  DATEADD(DAY, 7,[Full]) END,   
+ Diff_Days_since = CASE when [Diff] = '-'  THEN 0 ELSE DATEDIFF(DAY, [Diff],getdate())  END ,  
+ Diff_NextBackup = CASE when [Diff] = '-' THEN GETDATE() ELSE  DATEADD(DAY, 7,[Diff]) END   
+INTO #AtrasoBackup  
+FROM CTE_BACKUP_ATRASO  
+  
+  
+SELECT * FROM #AtrasoBackup WHERE Full_Days_since > 7  
+--and DatabaseName not like '%TESTE%'  
+  
+--SELECT * FROM #AtrasoBackup WHERE Diff_Days_since > 2  
+  
+select name as BancosSemBackup, [DatabaseSize(GB)], create_date from sys.databases ds  
+CROSS APPLY (select db_name(database_id) AS DbName, cast(sum(size/128.)/1024. as dec(12,2)) as [DatabaseSize(GB)]   from sys.master_files m where db_name(m.database_id) = ds.name group by database_id) AS D    
+where name   
+not in (select database_name from msdb.dbo.backupset b where type ='d' and is_copy_only=0)  
+and ds.name <> 'tempdb'
